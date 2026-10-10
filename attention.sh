@@ -78,7 +78,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 BELL=1              # 0 = don't send BEL
 NAG_SEC=0           # >0 = ring the bell again every N seconds until you've seen it
 TITLE=1             # 0 = leave the tab title alone
-MARK_PERMISSION="🔐" MARK_QUESTION="🙋" MARK_PLAN="📋" MARK_INPUT="✍️" MARK_DONE="🦖"
+MARK_PERMISSION="🔐" MARK_QUESTION="🙋" MARK_PLAN="📋" MARK_INPUT="✍️" MARK_DONE="👀"
 BG_SHELL_MIN=10     # only background shells left running: wait this long for Claude to resume before "done"
 SKIP_TERMINALS=""   # TERM_PROGRAM values to ignore, e.g. "vscode"
 [ -f "$here/attention.conf" ] && . "$here/attention.conf"

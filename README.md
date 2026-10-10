@@ -70,8 +70,8 @@ In Ghostty, iTerm2 and kitty, Claude Code sends its own pop-up notification for 
 |---|---|---|
 | `BELL` | `1` | `0` = no terminal bell |
 | `NAG_SEC` | `0` | ring the bell again every N seconds, so the dock icon keeps bouncing (macOS/Linux; stops after 30 min, and on macOS once you've brought the terminal to the front) |
-| `TITLE` | `1` | while Claude waits, the tab title shows a mark and the project, e.g. `🦖 my-app` (macOS/Linux). On macOS it goes as soon as you start typing in that tab |
-| `MARK_PERMISSION` … `MARK_DONE` | `🔐` `🙋` `📋` `✍️` `🦖` | the mark for each kind of wait: permission, question, plan, input, done |
+| `TITLE` | `1` | while Claude waits, the tab title shows a mark and the project, e.g. `👀 my-app` (macOS/Linux). On macOS it goes as soon as you start typing in that tab |
+| `MARK_PERMISSION` … `MARK_DONE` | `🔐` `🙋` `📋` `✍️` `👀` | the mark for each kind of wait: permission, question, plan, input, done |
 | `BG_SHELL_MIN` | `10` | when the turn ends with only background shells running, minutes to wait for Claude to resume before "done" (`0` = don't wait). Background agents are always waited for |
 | `SKIP_TERMINALS` | `""` | `TERM_PROGRAM` values to ignore, e.g. `"vscode"` |
 
