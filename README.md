@@ -3,8 +3,7 @@
 Know when Claude Code is waiting for you, so a long session doesn't need watching.
 Works in macOS and Windows terminals.
 
-- **Quiet marker, always:** the bell (🔔 on the tab, a dock badge/bounce, a taskbar flash) and, where supported, a ring on the tab. It appears at once, makes no sound, and clears as soon as you respond.
-- **Pop-up, only when Claude is blocked and you're not looking:** right away for a permission prompt, a question or a plan to approve. After 60 s for "done, your turn". At most one per wait. Answering earlier cancels it.
+- **Quiet markers, no pop-ups:** the bell (🔔 on the tab, a dock badge/bounce, a taskbar flash), a mark in the tab title and, where supported, a ring on the tab. They appear at once, make no sound, and clear as soon as you respond.
 - **Not while Claude is still busy in the background:** if the turn ends while background agents or shell commands are still running, nothing fires. Claude picks up again when they finish. Agents get as long as they need. Shells get 10 minutes, after which "done" shows anyway, in case it's a server that never exits.
 - **Interactive terminal sessions only:** nothing fires in the VS Code/JetBrains extension panel, the Claude desktop app, SDK scripts or `claude -p`.
 
@@ -38,23 +37,22 @@ New sessions pick up the hooks; restart any running ones.
 
 ## What you get
 
-| Terminal | Quiet marker | Pop-up |
-|---|---|---|
-| Ghostty | 🔔 in tab title, dock bounce (and a dock badge if notifications with Badges are allowed for Ghostty) | Claude's own (permission/idle) + hook (questions, plans) |
-| iTerm2 | bell icon on tab, dock bounce | Claude's own + hook (questions, plans) |
-| Terminal.app | dock badge + bounce (enable below) | hook |
-| VS Code / Cursor terminal | bell icon on the tab | hook |
-| Windows Terminal | yellow tab ring + taskbar progress, taskbar flash | hook (toast) |
-| PowerShell / cmd window | taskbar flash | hook (toast) |
-| VS Code on Windows | taskbar flash, bell icon on the tab | hook (toast) |
+| Terminal | Markers |
+|---|---|
+| Ghostty | 🔔 in tab title, dock bounce (and a dock badge if notifications with Badges are allowed for Ghostty) |
+| iTerm2 | bell icon on tab, dock bounce |
+| Terminal.app | dock badge + bounce (enable below) |
+| VS Code / Cursor terminal | bell icon on the tab |
+| Windows Terminal | yellow tab ring + taskbar progress, taskbar flash |
+| PowerShell / cmd window | taskbar flash |
+| VS Code on Windows | taskbar flash, bell icon on the tab |
 
-In Ghostty, iTerm2 and kitty, Claude Code already sends its own notification for permission prompts and after 60 s idle. It's focus-aware, and clicking it opens the right tab, so the hook leaves those events to it. Claude's own notification never covers AskUserQuestion or plan approval, so the hook covers those. Claude's own only appear if the terminal may post notifications. If you keep the terminal's notifications off, set `BUILTIN_TERMINALS=""` so the hook sends them instead.
+In Ghostty, iTerm2 and kitty, Claude Code sends its own pop-up notification for permission prompts and after 60 s idle. For markers only, turn those off: `/config` → Notifications → disabled.
 
 ## One-time setup
 
 **macOS**
-- System Settings → Notifications → **Script Editor**: allow. The hook's pop-ups come from `osascript`. Set the style to *Alerts* (*Persistent*) to keep them on screen until you dismiss them.
-- System Settings → Notifications → **your terminal** (Ghostty/iTerm2): allow, with Badges on. The badge stays on the dock icon until you switch back to the terminal, so you can see at a glance that Claude is waiting. If the terminal is listed but switched off, macOS refuses its badge without asking (Ghostty logs `UNErrorDomain Code=1`), and Claude's own pop-ups don't appear either.
+- System Settings → Notifications → **your terminal** (Ghostty/iTerm2): allow, with Badges on. The badge stays on the dock icon until you switch back to the terminal, so you can see at a glance that Claude is waiting. Set the alert style to *None* if you only want the badge. If the terminal is listed but switched off, macOS refuses its badge without asking (Ghostty logs `UNErrorDomain Code=1`).
 - Terminal.app: Settings → Profiles → Advanced → Bell: tick *Badge app icon* and *Bounce app icon*; untick *Audible bell*, or it beeps at every turn end.
 - iTerm2: Settings → Profiles → Terminal: *Silence bell*, *Show bell icon in tabs*.
 - VS Code: `"terminal.integrated.enableVisualBell": true`, `"accessibility.signals.terminalBell": {"sound": "off"}`.
@@ -62,7 +60,6 @@ In Ghostty, iTerm2 and kitty, Claude Code already sends its own notification for
 
 **Windows**
 - Claude Code runs hooks with Git Bash (Git for Windows), which must be installed.
-- Pop-ups are toasts from *Windows PowerShell*: keep its notifications on in Settings → System → Notifications.
 - Windows Terminal (optional): `"bellStyle": ["window", "taskbar"]` in `profiles.defaults`. The hook already flashes the taskbar itself.
 
 ## Settings
@@ -71,20 +68,12 @@ In Ghostty, iTerm2 and kitty, Claude Code already sends its own notification for
 
 | Setting | Default | |
 |---|---|---|
-| `POPUP` | `auto` | `auto` = only when you're not looking · `always` · `never` (markers only) |
-| `DELAY` | `60` | seconds before the "done" pop-up |
-| `SOUND` | `blocking` | which pop-ups play a sound: `blocking` (permission/question/plan) · `all` · `none` |
 | `BELL` | `1` | `0` = no terminal bell |
-| `REMIND_MIN` | `0` | one reminder after N minutes if still unanswered |
-| `NAG_SEC` | `0` | ring the bell again every N seconds while you're not looking, so the dock icon keeps bouncing (macOS/Linux; stops after 30 min) |
+| `NAG_SEC` | `0` | ring the bell again every N seconds, so the dock icon keeps bouncing (macOS/Linux; stops after 30 min, and on macOS once you've brought the terminal to the front) |
 | `TITLE` | `1` | while Claude waits, the tab title shows a mark and the project, e.g. `🦖 my-app` (macOS/Linux). On macOS it goes as soon as you start typing in that tab |
 | `MARK_PERMISSION` … `MARK_DONE` | `🔐` `🙋` `📋` `✍️` `🦖` | the mark for each kind of wait: permission, question, plan, input, done |
 | `BG_SHELL_MIN` | `10` | when the turn ends with only background shells running, minutes to wait for Claude to resume before "done" (`0` = don't wait). Background agents are always waited for |
-| `AWAY_SEC` | `120` | idle this long counts as away, even with the terminal in front |
 | `SKIP_TERMINALS` | `""` | `TERM_PROGRAM` values to ignore, e.g. `"vscode"` |
-| `BUILTIN_TERMINALS` | `"ghostty iTerm.app kitty"` | terminals where Claude's own pop-ups are left to do their job |
-
-Mute pop-ups for a while with `touch ~/.claude/hooks/attention.mute`; delete the file to unmute.
 
 ## How it works
 
@@ -98,21 +87,18 @@ Mute pop-ups for a while with `touch ~/.claude/hooks/attention.mute`; delete the
 | `UserPromptSubmit`, `SessionEnd` | `attention.sh off` / `off end` |
 | `PostToolUse`, `PostToolUseFailure` | `attention.sh off tool` |
 
-- **Markers:** `wait` returns `{"terminalSequence": "BEL + OSC 9;4;4"}`, and Claude Code writes it to the terminal. The OSC 9;4 tab ring is skipped in Ghostty/iTerm2/ConEmu, which already show Claude's own progress bar. With `NAG_SEC`, a detached job rings the bell again while you're not looking. The `TITLE` mark is written a second after the wait starts, once Claude has finished redrawing its own title. Hooks have no controlling terminal, so both write to the `claude` process's tty, found with `ps`.
-- **Pop-ups:** `wait` saves a token per session and starts a detached job. A blocking prompt is checked right away and the "done" turn after `DELAY` seconds. The check is whether you're looking: is the terminal the frontmost app (macOS `lsappinfo`, Windows `GetForegroundWindow`), and have you used the keyboard or mouse recently? If you're not looking, and the wait is still on, it shows an `osascript` notification or a Windows toast. If you were looking when a blocking prompt appeared, there's no later re-check: no hook fires when you answer a permission prompt, so a re-check can't tell whether you walked away or approved a long-running tool. Windows toasts are tagged by session, so they replace each other and are removed when you respond.
-- **Background work:** `Stop` lists the background tasks still running (`background_tasks`). If any is a subagent, workflow, teammate or cloud session, `wait done` only records a "busy" wait and signals nothing. When the work finishes, Claude resumes, and that turn's `Stop` decides. If only shells, monitors or MCP tasks are running, a detached job waits `BG_SHELL_MIN` minutes. If Claude still hasn't resumed by then, the job rings the bell, sets the title and schedules the pop-up, just as an ordinary "done" does.
-- **Clearing:** `off` deletes the token, which cancels pending pop-ups, and clears the ring. On macOS, typing in the tab ends the wait too, before you submit. The title job watches the tty's access time, which moves whenever Claude reads input. Focus changes, scrolling, clicks and the terminal's replies to Claude's queries move it as well, so a read only counts if the terminal is in front and a key was pressed within the last second (`CGEventSourceSecondsSinceLastEventType`, via `osascript`, run only when the tty was read). Reads in the first 7 s are ignored: Claude's queries cluster right after it redraws. After a tool call (`off tool`), only a wait that belongs to that call is cleared. The call has to come from the same agent, so a subagent's tools don't clear the main thread's prompt. For a question or plan, it also has to be the same tool call (`tool_use_id`).
-- **Which sessions:** the hook does nothing unless `CLAUDE_CODE_ENTRYPOINT=cli` (an interactive terminal). Over SSH you get markers only.
+- **Markers:** `wait` returns `{"terminalSequence": "BEL + OSC 9;4;4"}`, and Claude Code writes it to the terminal. The OSC 9;4 tab ring is skipped in Ghostty/iTerm2/ConEmu, which already show Claude's own progress bar. With `NAG_SEC`, a detached job rings the bell again. On macOS it stops once the terminal is the frontmost app (`lsappinfo`): you've seen it, and the dock badge it cleared stays cleared even if you leave without answering. The `TITLE` mark is written a second after the wait starts, once Claude has finished redrawing its own title. Hooks have no controlling terminal, so both write to the `claude` process's tty, found with `ps`.
+- **Wait token:** `wait` saves a token per session; the detached jobs stop as soon as it's gone or replaced.
+- **Background work:** `Stop` lists the background tasks still running (`background_tasks`). If any is a subagent, workflow, teammate or cloud session, `wait done` only records a "busy" wait and signals nothing. When the work finishes, Claude resumes, and that turn's `Stop` decides. If only shells, monitors or MCP tasks are running, a detached job waits `BG_SHELL_MIN` minutes. If Claude still hasn't resumed by then, the job rings the bell and sets the title, just as an ordinary "done" does.
+- **Clearing:** `off` deletes the token, which stops the title and nag jobs, and clears the ring. On macOS, typing in the tab ends the wait too, before you submit. The title job watches the tty's access time, which moves whenever Claude reads input. Focus changes, scrolling, clicks and the terminal's replies to Claude's queries move it as well, so a read only counts if the terminal is in front and a key was pressed within the last second (`CGEventSourceSecondsSinceLastEventType`, via `osascript`, run only when the tty was read). Reads in the first 7 s are ignored: Claude's queries cluster right after it redraws. After a tool call (`off tool`), only a wait that belongs to that call is cleared. The call has to come from the same agent, so a subagent's tools don't clear the main thread's prompt. For a question or plan, it also has to be the same tool call (`tool_use_id`).
+- **Which sessions:** the hook does nothing unless `CLAUDE_CODE_ENTRYPOINT=cli` (an interactive terminal).
 
 ## Known limitations
 
-- **Tabs:** the "are you looking" check works per app, not per tab. If the terminal is in front but you're on another tab, there's no pop-up; that tab still shows its 🔔/ring.
+- **Tabs:** the "have you seen it" check for `NAG_SEC` works per app, not per tab. Bringing the terminal to the front on another tab stops the nags too; the waiting tab still shows its 🔔/ring.
 - **Typing clears the mark:** the check knows the terminal app is in front, not which tab is focused. So switching to the tab with Cmd-Tab, or leaving it with a keyboard shortcut, also counts as typing there. Both only happen while you're on that tab. On Linux the mark stays until you submit.
-- **Background shells:** no hook fires when a background shell finishes, so the hook can't tell a long build from a server that never exits. If a shell is still running after `BG_SHELL_MIN`, "done" shows even though Claude may still pick up later. In Ghostty/iTerm2/kitty, Claude's own idle notification doesn't wait for background shells, so it can still pop up after 60 s.
+- **Background shells:** no hook fires when a background shell finishes, so the hook can't tell a long build from a server that never exits. If a shell is still running after `BG_SHELL_MIN`, "done" shows even though Claude may still pick up later.
 - **Older Claude Code:** versions that don't send `background_tasks` on `Stop` get "done" as soon as the main turn ends, even with background work still running.
-- **macOS banners:** `osascript` banners can't be removed from code once shown, and clicking one doesn't focus the terminal.
-- **Prompts you saw:** if the terminal was in front when a permission prompt, question or plan appeared, you get no pop-up later, even if you walk away without answering. The tab marker stays.
-- **Reminders:** with `REMIND_MIN` set, a reminder can still fire while a long-running tool works, if you approved it after the first pop-up.
 
 ## Check it works
 
@@ -122,18 +108,13 @@ echo '{"session_id":"t"}' | CLAUDE_CODE_ENTRYPOINT=cli sh ~/.claude/hooks/attent
 ```
 
 Live test:
-1. Start `claude` in a new terminal tab and ask for something short. Switch to another app. You should see the bell/badge, then one pop-up after ~60 s.
-2. Ask Claude to ask you a question (AskUserQuestion) and switch away. You should get a pop-up right away.
+1. Start `claude` in a new terminal tab and ask for something short. Switch to another app. You should see the bell/badge and the title mark.
+2. With `NAG_SEC=10`, stay away: the dock icon bounces again every 10 s. Switch to the terminal and back without typing: no more bounces.
 3. Answer. The marker clears. On macOS the title mark clears as soon as you start typing in that tab.
-4. For quicker testing, put `DELAY=10` in `attention.conf`.
 
 If nothing shows, run `claude --debug` and look for `rejected by the allowlist` or hook errors.
 
 Windows checklist, since this wasn't tested from a Mac:
-- toast after a permission prompt while another app is focused;
 - yellow tab ring in Windows Terminal;
 - taskbar flash in Windows Terminal, a PowerShell window and VS Code. The hook has exited by the time the flash runs, so this checks that the window is found through the console's other processes;
-- no toast when the terminal is in front and you're active;
-- the toast disappears from Action Center after you respond, including when you answer within a second or two of the prompt;
-- the "Done — your turn" toast shows the em dash correctly;
 - `claude --debug` shows `PermissionRequest` running before the `permission_prompt` Notification.

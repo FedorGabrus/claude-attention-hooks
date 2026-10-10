@@ -109,7 +109,6 @@ if (-not $Uninstall) {
   Write-Host 'New Claude Code sessions pick it up; running ones need a restart.'
   Write-Host ''
   Write-Host 'Optional, Windows Terminal: add "bellStyle": ["window", "taskbar"] to profiles.defaults.'
-  Write-Host 'Pop-ups are Windows toasts from "Windows PowerShell": keep its notifications on in Settings > System > Notifications.'
 } else {
   foreach ($f in 'attention.sh', 'attention.ps1', 'attention.mute') { Remove-Item (Join-Path $HooksDir $f) -ErrorAction SilentlyContinue }
   Remove-Item (Join-Path $env:TEMP 'claude-attention-*') -ErrorAction SilentlyContinue   # attention.sh's state files

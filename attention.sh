@@ -5,15 +5,10 @@
 #   attention.sh arm         (PermissionRequest: note whose prompt comes next)
 #   attention.sh off [tool|end]
 #
-# Two tiers:
-#   passive  - BEL (tab bell / dock badge / taskbar flash) and, where Claude
-#              doesn't draw its own progress bar, an OSC 9;4 "warning" ring on
-#              the tab. Immediate, silent, cleared as soon as you respond.
-#              With NAG_SEC, the bell rings again while you're not looking.
-#   pop-up   - an OS notification, only when Claude is blocked and you're not
-#              looking at the terminal: right away for permission/question/plan,
-#              after $DELAY seconds for "done". At most one per wait (plus an
-#              optional reminder). Answering earlier cancels it.
+# Quiet markers only, no pop-ups: BEL (tab bell / dock badge / taskbar flash)
+# and, where Claude doesn't draw its own progress bar, an OSC 9;4 "warning"
+# ring on the tab. Immediate, silent, cleared as soon as you respond. With
+# NAG_SEC, the bell rings again until you've seen it.
 #
 # "Done" holds off while Claude is still waiting on background work: for as
 # long as background agents run, and for up to $BG_SHELL_MIN minutes when only
@@ -22,8 +17,8 @@
 #
 # Hooks have no controlling terminal, so escape sequences go back to Claude
 # Code in the `terminalSequence` JSON field. (The NAG_SEC bells and the TITLE
-# mark go straight to claude's own tty, found with ps.) Anything slow (pop-ups, Windows
-# taskbar flash) runs detached so the hook returns in milliseconds.
+# mark go straight to claude's own tty, found with ps.) Anything slow (the
+# Windows taskbar flash) runs detached so the hook returns in milliseconds.
 # Works in macOS sh and Git Bash on Windows. Settings: attention.conf.
 
 input=$(cat)
@@ -80,21 +75,13 @@ fi
 
 here=$(cd "$(dirname "$0")" && pwd)
 
-POPUP=auto          # auto | always | never
-DELAY=60            # seconds before the "done" pop-up
-SOUND=blocking      # blocking | all | none
 BELL=1              # 0 = don't send BEL
-REMIND_MIN=0        # >0 = one reminder pop-up after this many minutes
-NAG_SEC=0           # >0 = ring the bell again every N seconds while you're not looking
+NAG_SEC=0           # >0 = ring the bell again every N seconds until you've seen it
 TITLE=1             # 0 = leave the tab title alone
 MARK_PERMISSION="🔐" MARK_QUESTION="🙋" MARK_PLAN="📋" MARK_INPUT="✍️" MARK_DONE="🦖"
 BG_SHELL_MIN=10     # only background shells left running: wait this long for Claude to resume before "done"
-AWAY_SEC=120        # idle longer than this = you're away, even if the terminal is in front
 SKIP_TERMINALS=""   # TERM_PROGRAM values to ignore, e.g. "vscode"
-BUILTIN_TERMINALS="ghostty iTerm.app kitty"  # Claude's own pop-ups cover permission/input/idle here
-MAC_SOUND=Glass
 [ -f "$here/attention.conf" ] && . "$here/attention.conf"
-DELAY=${CLAUDE_ATTENTION_DELAY:-$DELAY}
 
 # kitty doesn't set TERM_PROGRAM.
 term=${TERM_PROGRAM:-}
@@ -127,58 +114,13 @@ winps() {
   powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$ps1" "$@"
 }
 
-# You're "looking" if the terminal app is in front and you've touched the
-# keyboard/mouse recently. (Windows checks this inside `winps notify`.)
+# Is the terminal app in front? (macOS)
 term_in_front() {
   front=$(lsappinfo info -only bundleID "$(lsappinfo front)" 2>/dev/null | sed -n 's/.*="\(.*\)".*/\1/p')
   [ -n "$front" ] && [ "$front" = "${__CFBundleIdentifier:-}" ]
 }
 
-present() {
-  [ "$POPUP" = always ] && return 1
-  case $os in
-    mac)
-      term_in_front || return 1
-      idle=$(ioreg -c IOHIDSystem 2>/dev/null | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}')
-      [ "${idle:-0}" -lt "$AWAY_SEC" ]
-      ;;
-    *) return 1 ;;
-  esac
-}
-
 still_waiting() { cur=; IFS= read -r cur 2>/dev/null <"$state"; [ "$cur" = "$token" ]; }
-
-# Pop up unless you're looking or the wait is over. Fails if nothing was shown.
-notify() {
-  case $os in
-    mac)
-      present && return 1
-      still_waiting || return 1
-      snd=""
-      [ $sound = 1 ] && snd=" sound name (item 3 of argv)"
-      osascript -e 'on run argv' -e "display notification (item 2 of argv) with title (item 1 of argv)$snd" -e 'end run' "Claude Code · $project" "$body" "$MAC_SOUND"
-      ;;
-    windows)
-      always=
-      [ "$POPUP" = always ] && always=-Always
-      winps notify -Body "$body" -Project "$project" -Tag "$sid" -Sound "$sound" -AwaySec "$AWAY_SEC" \
-        -State "$(cygpath -w "$state")" -Token "$token" $always
-      ;;
-    *) return 1 ;;
-  esac
-}
-
-# A blocking prompt you were looking at when it appeared isn't re-checked:
-# no hook fires when you answer a permission prompt, so a later check can't
-# tell "walked away" from "approved a long-running tool".
-popup_job() {
-  [ "$blocking" = 1 ] || sleep "$DELAY"
-  notify || return
-  if [ "${REMIND_MIN:-0}" -gt 0 ]; then
-    sleep $((REMIND_MIN * 60))
-    still_waiting && notify
-  fi
-}
 
 # The hook has no controlling terminal; the claude process up the tree does.
 claude_tty() {
@@ -208,9 +150,9 @@ typed_here() {
 
 # Put "<mark> <project>" in the tab title. Claude Code sets the title itself,
 # so ours goes in after it's done redrawing. On macOS, once you start typing
-# in the tab the wait counts as answered: the mark and ring go, and so do
-# pending pop-ups and nags. Otherwise Claude's next title update, once you
-# respond and it gets to work, puts its own back.
+# in the tab the wait counts as answered: the mark, ring and nags go.
+# Otherwise Claude's next title update, once you respond and it gets to work,
+# puts its own back.
 title_job() {
   sleep 1
   still_waiting || return
@@ -231,15 +173,18 @@ title_job() {
   done
 }
 
-# Ring the bell again every NAG_SEC seconds while you're not looking, so the
-# dock icon keeps bouncing (each bell bounces once). Gives up after 30 min.
+# Ring the bell again every NAG_SEC seconds, so the dock icon keeps bouncing
+# (each bell bounces once). On macOS it stops for good once the terminal comes
+# to the front: you've seen it, and the dock badge it cleared stays cleared
+# even if you leave without answering. Gives up after 30 min.
 nag_job() {
   n=0
   while [ $n -lt 1800 ]; do
-    sleep "$NAG_SEC"
-    n=$((n + NAG_SEC))
+    sleep 1
+    n=$((n + 1))
     still_waiting || return
-    present || printf '\a' >"$tty"
+    [ $os = mac ] && term_in_front && return
+    [ $((n % NAG_SEC)) = 0 ] && printf '\a' >"$tty"
   done
 }
 
@@ -247,20 +192,12 @@ write_state() {
   printf '%s\nkind=%s\nowner=%s\ntool=%s\n' "$token" "$1" "${owner:-main}" "$tool" >"$state"
 }
 
-# Pop-up, tab title and nag jobs for the current wait, all detached.
+# Tab title and nag jobs for the current wait, both detached.
 start_jobs() {
-  pop=1
-  [ "$POPUP" = never ] && pop=0
-  [ -f "$here/attention.mute" ] && pop=0
-  [ -n "${SSH_CONNECTION:-}" ] && pop=0
-  case " $BUILTIN_TERMINALS " in
-    *" ${term:-none} "*) case $kind in permission|input|done) pop=0 ;; esac ;;
-  esac
-  if [ $pop = 1 ]; then popup_job </dev/null >/dev/null 2>&1 & fi
   # Look up the tty now: once this hook exits, its parent may be gone too.
   title=0 nag=0
   [ "$TITLE" = 1 ] && [ -n "$mark" ] && title=1
-  [ "$BELL" = 1 ] && [ "${NAG_SEC:-0}" -gt 0 ] && [ ! -f "$here/attention.mute" ] && nag=1
+  [ "$BELL" = 1 ] && [ "${NAG_SEC:-0}" -gt 0 ] && nag=1
   if [ $os != windows ] && [ $title$nag != 00 ] && { [ -n "${tty:-}" ] || tty=$(claude_tty); }; then
     [ $title = 1 ] && title_job </dev/null >/dev/null 2>&1 &
     [ $nag = 1 ] && nag_job </dev/null >/dev/null 2>&1 &
@@ -284,17 +221,13 @@ late_done_job() {
 case "$1" in
   wait)
     kind=${2:-done}
-    blocking=1
-    [ "$kind" = done ] && blocking=0
     case $kind in
-      permission) body="Permission needed" mark=$MARK_PERMISSION ;;
-      question) body="Question for you" mark=$MARK_QUESTION ;;
-      plan) body="Plan ready for review" mark=$MARK_PLAN ;;
-      input) body="Input needed" mark=$MARK_INPUT ;;
-      *) body="Done — your turn" mark=$MARK_DONE ;;
+      permission) mark=$MARK_PERMISSION ;;
+      question) mark=$MARK_QUESTION ;;
+      plan) mark=$MARK_PLAN ;;
+      input) mark=$MARK_INPUT ;;
+      *) mark=$MARK_DONE ;;
     esac
-    sound=0
-    case $SOUND in all) sound=1 ;; blocking) [ "$blocking" = 1 ] && sound=1 ;; esac
 
     # Whose wait this is, so `off tool` can tell its tool calls from others'.
     owner=
@@ -351,7 +284,6 @@ case "$1" in
     # Only reached when this wait should end (see the checks at the top).
     rm -f "$state"
     [ $progress = 1 ] && emit '\u001b]9;4;0;0\u0007'
-    if [ $os = windows ]; then winps clear -Tag "$sid" </dev/null >/dev/null 2>&1 & fi
     ;;
 esac
 exit 0
