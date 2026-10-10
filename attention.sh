@@ -133,24 +133,25 @@ claude_tty() {
   return 1
 }
 
-# Did you just type into this tab? Claude reads its tty when there's input,
-# which moves the tty's access time. Other things do too: focus changes,
-# scrolling, clicks, and the terminal answering Claude's queries (a burst of
-# them right after Claude draws). So a read only counts with the terminal in
-# front and a key pressed in the last second. macOS only.
-typed_here() {
+# Did you just type or scroll in this tab? Claude reads its tty when there's
+# input (scrolling included: Claude turns on mouse reporting), which moves the
+# tty's access time. Other things do too: focus changes, clicks, and the
+# terminal answering Claude's queries (a burst of them right after Claude
+# draws). So a read only counts with the terminal in front and a key press
+# (event type 10) or scroll (22) in the last second. macOS only.
+used_here() {
   t=$(stat -f %a "$tty" 2>/dev/null) || return 1
   [ "$t" = "$read_at" ] && return 1
   read_at=$t
   [ $n -ge 12 ] || return 1   # still settling after Claude's last redraw
   term_in_front || return 1
-  key=$(osascript -l JavaScript -e 'ObjC.import("CoreGraphics"); $.CGEventSourceSecondsSinceLastEventType(1, 10) < 1' 2>/dev/null)
-  [ "$key" = true ]
+  used=$(osascript -l JavaScript -e 'ObjC.import("CoreGraphics"); [10, 22].some(e => $.CGEventSourceSecondsSinceLastEventType(1, e) < 1)' 2>/dev/null)
+  [ "$used" = true ]
 }
 
 # Put "<mark> <project>" in the tab title. Claude Code sets the title itself,
 # so ours goes in after it's done redrawing. On macOS, once you start typing
-# in the tab the wait counts as answered: the mark, ring and nags go.
+# or scroll in the tab the wait counts as answered: the mark, ring and nags go.
 # Otherwise Claude's next title update, once you respond and it gets to work,
 # puts its own back.
 title_job() {
@@ -164,7 +165,7 @@ title_job() {
     sleep 0.5
     n=$((n + 1))
     still_waiting || return
-    typed_here || continue
+    used_here || continue
     rm -f "$state"
     clear=
     [ $progress = 1 ] && clear='\033]9;4;0;0\007'

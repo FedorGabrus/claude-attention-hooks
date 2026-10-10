@@ -70,7 +70,7 @@ In Ghostty, iTerm2 and kitty, Claude Code sends its own pop-up notification for 
 |---|---|---|
 | `BELL` | `1` | `0` = no terminal bell |
 | `NAG_SEC` | `0` | ring the bell again every N seconds, so the dock icon keeps bouncing (macOS/Linux; stops after 30 min, and on macOS once you've brought the terminal to the front) |
-| `TITLE` | `1` | while Claude waits, the tab title shows a mark and the project, e.g. `👀 my-app` (macOS/Linux). On macOS it goes as soon as you start typing in that tab |
+| `TITLE` | `1` | while Claude waits, the tab title shows a mark and the project, e.g. `👀 my-app` (macOS/Linux). On macOS it goes as soon as you start typing or scroll in that tab |
 | `MARK_PERMISSION` … `MARK_DONE` | `🔐` `🙋` `📋` `✍️` `👀` | the mark for each kind of wait: permission, question, plan, input, done |
 | `BG_SHELL_MIN` | `10` | when the turn ends with only background shells running, minutes to wait for Claude to resume before "done" (`0` = don't wait). Background agents are always waited for |
 | `SKIP_TERMINALS` | `""` | `TERM_PROGRAM` values to ignore, e.g. `"vscode"` |
@@ -90,13 +90,14 @@ In Ghostty, iTerm2 and kitty, Claude Code sends its own pop-up notification for 
 - **Markers:** `wait` returns `{"terminalSequence": "BEL + OSC 9;4;4"}`, and Claude Code writes it to the terminal. The OSC 9;4 tab ring is skipped in Ghostty/iTerm2/ConEmu, which already show Claude's own progress bar. With `NAG_SEC`, a detached job rings the bell again. On macOS it stops once the terminal is the frontmost app (`lsappinfo`): you've seen it, and the dock badge it cleared stays cleared even if you leave without answering. The `TITLE` mark is written a second after the wait starts, once Claude has finished redrawing its own title. Hooks have no controlling terminal, so both write to the `claude` process's tty, found with `ps`.
 - **Wait token:** `wait` saves a token per session; the detached jobs stop as soon as it's gone or replaced.
 - **Background work:** `Stop` lists the background tasks still running (`background_tasks`). If any is a subagent, workflow, teammate or cloud session, `wait done` only records a "busy" wait and signals nothing. When the work finishes, Claude resumes, and that turn's `Stop` decides. If only shells, monitors or MCP tasks are running, a detached job waits `BG_SHELL_MIN` minutes. If Claude still hasn't resumed by then, the job rings the bell and sets the title, just as an ordinary "done" does.
-- **Clearing:** `off` deletes the token, which stops the title and nag jobs, and clears the ring. On macOS, typing in the tab ends the wait too, before you submit. The title job watches the tty's access time, which moves whenever Claude reads input. Focus changes, scrolling, clicks and the terminal's replies to Claude's queries move it as well, so a read only counts if the terminal is in front and a key was pressed within the last second (`CGEventSourceSecondsSinceLastEventType`, via `osascript`, run only when the tty was read). Reads in the first 7 s are ignored: Claude's queries cluster right after it redraws. After a tool call (`off tool`), only a wait that belongs to that call is cleared. The call has to come from the same agent, so a subagent's tools don't clear the main thread's prompt. For a question or plan, it also has to be the same tool call (`tool_use_id`).
+- **Clearing:** `off` deletes the token, which stops the title and nag jobs, and clears the ring. On macOS, typing or scrolling in the tab ends the wait too, before you submit. The title job watches the tty's access time, which moves whenever Claude reads input, scroll events included (Claude turns on mouse reporting). Focus changes, clicks and the terminal's replies to Claude's queries move it as well, so a read only counts if the terminal is in front and a key was pressed or the wheel scrolled within the last second (`CGEventSourceSecondsSinceLastEventType`, via `osascript`, run only when the tty was read). Reads in the first 7 s are ignored: Claude's queries cluster right after it redraws. After a tool call (`off tool`), only a wait that belongs to that call is cleared. The call has to come from the same agent, so a subagent's tools don't clear the main thread's prompt. For a question or plan, it also has to be the same tool call (`tool_use_id`).
 - **Which sessions:** the hook does nothing unless `CLAUDE_CODE_ENTRYPOINT=cli` (an interactive terminal).
 
 ## Known limitations
 
 - **Tabs:** the "have you seen it" check for `NAG_SEC` works per app, not per tab. Bringing the terminal to the front on another tab stops the nags too; the waiting tab still shows its 🔔/ring.
-- **Typing clears the mark:** the check knows the terminal app is in front, not which tab is focused. So switching to the tab with Cmd-Tab, or leaving it with a keyboard shortcut, also counts as typing there. Both only happen while you're on that tab. On Linux the mark stays until you submit.
+- **Typing or scrolling clears the mark:** the check knows the terminal app is in front, not which tab is focused. So switching to the tab with Cmd-Tab, or leaving it with a keyboard shortcut, also counts as typing there. Both only happen while you're on that tab. Scrolling only counts while Claude has mouse reporting on; if your terminal scrolls its own scrollback instead, Claude never sees the scroll. On Linux the mark stays until you submit.
+- **Ghostty's dock badge:** Ghostty clears it itself, only when the tab gains focus or you press a key in it. If the bell rang while you were already on that tab, scrolling clears our mark but the badge stays until you type or switch away and back.
 - **Background shells:** no hook fires when a background shell finishes, so the hook can't tell a long build from a server that never exits. If a shell is still running after `BG_SHELL_MIN`, "done" shows even though Claude may still pick up later.
 - **Older Claude Code:** versions that don't send `background_tasks` on `Stop` get "done" as soon as the main turn ends, even with background work still running.
 
@@ -110,7 +111,7 @@ echo '{"session_id":"t"}' | CLAUDE_CODE_ENTRYPOINT=cli sh ~/.claude/hooks/attent
 Live test:
 1. Start `claude` in a new terminal tab and ask for something short. Switch to another app. You should see the bell/badge and the title mark.
 2. With `NAG_SEC=10`, stay away: the dock icon bounces again every 10 s. Switch to the terminal and back without typing: no more bounces.
-3. Answer. The marker clears. On macOS the title mark clears as soon as you start typing in that tab.
+3. Answer. The marker clears. On macOS the title mark clears as soon as you start typing or scroll in that tab.
 
 If nothing shows, run `claude --debug` and look for `rejected by the allowlist` or hook errors.
 
