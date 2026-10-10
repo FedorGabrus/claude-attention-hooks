@@ -118,3 +118,7 @@ Windows checklist, since this wasn't tested from a Mac:
 - yellow tab ring in Windows Terminal;
 - taskbar flash in Windows Terminal, a PowerShell window and VS Code. The hook has exited by the time the flash runs, so this checks that the window is found through the console's other processes;
 - `claude --debug` shows `PermissionRequest` running before the `permission_prompt` Notification.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
