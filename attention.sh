@@ -9,13 +9,15 @@
 #   passive  - BEL (tab bell / dock badge / taskbar flash) and, where Claude
 #              doesn't draw its own progress bar, an OSC 9;4 "warning" ring on
 #              the tab. Immediate, silent, cleared as soon as you respond.
+#              With NAG_SEC, the bell rings again while you're not looking.
 #   pop-up   - an OS notification, only when Claude is blocked and you're not
 #              looking at the terminal: right away for permission/question/plan,
 #              after $DELAY seconds for "done". At most one per wait (plus an
 #              optional reminder). Answering earlier cancels it.
 #
-# Hooks can't write to the terminal, so escape sequences go back to Claude
-# Code in the `terminalSequence` JSON field. Anything slow (pop-ups, Windows
+# Hooks have no controlling terminal, so escape sequences go back to Claude
+# Code in the `terminalSequence` JSON field. (The NAG_SEC bells and the TITLE
+# mark go straight to claude's own tty, found with ps.) Anything slow (pop-ups, Windows
 # taskbar flash) runs detached so the hook returns in milliseconds.
 # Works in macOS sh and Git Bash on Windows. Settings: attention.conf.
 
@@ -78,6 +80,9 @@ DELAY=60            # seconds before the "done" pop-up
 SOUND=blocking      # blocking | all | none
 BELL=1              # 0 = don't send BEL
 REMIND_MIN=0        # >0 = one reminder pop-up after this many minutes
+NAG_SEC=0           # >0 = ring the bell again every N seconds while you're not looking
+TITLE=1             # 0 = leave the tab title alone
+MARK_PERMISSION="🔐" MARK_QUESTION="🙋" MARK_PLAN="📋" MARK_INPUT="✍️" MARK_DONE="🦖"
 AWAY_SEC=120        # idle longer than this = you're away, even if the terminal is in front
 SKIP_TERMINALS=""   # TERM_PROGRAM values to ignore, e.g. "vscode"
 BUILTIN_TERMINALS="ghostty iTerm.app kitty"  # Claude's own pop-ups cover permission/input/idle here
@@ -165,17 +170,49 @@ popup_job() {
   fi
 }
 
+# The hook has no controlling terminal; the claude process up the tree does.
+claude_tty() {
+  p=$PPID
+  while [ "${p:-1}" -gt 1 ]; do
+    set -- $(ps -o tty= -o ppid= -p "$p" 2>/dev/null)
+    case ${1:-} in tty*|pts/*) [ -w "/dev/$1" ] && echo "/dev/$1" && return ;; esac
+    p=${2:-1}
+  done
+  return 1
+}
+
+# Put "<mark> <project>" in the tab title. Claude Code sets the title itself,
+# so ours goes in after it's done redrawing; Claude's next title update (once
+# you respond and it gets to work) puts its own back.
+title_job() {
+  sleep 1
+  still_waiting || return
+  printf '\033]2;%s %s\007' "$mark" "$project" >"$tty"
+}
+
+# Ring the bell again every NAG_SEC seconds while you're not looking, so the
+# dock icon keeps bouncing (each bell bounces once). Gives up after 30 min.
+nag_job() {
+  n=0
+  while [ $n -lt 1800 ]; do
+    sleep "$NAG_SEC"
+    n=$((n + NAG_SEC))
+    still_waiting || return
+    present || printf '\a' >"$tty"
+  done
+}
+
 case "$1" in
   wait)
     kind=${2:-done}
     blocking=1
     [ "$kind" = done ] && blocking=0
     case $kind in
-      permission) body="Permission needed" ;;
-      question) body="Question for you" ;;
-      plan) body="Plan ready for review" ;;
-      input) body="Input needed" ;;
-      *) body="Done — your turn" ;;
+      permission) body="Permission needed" mark=$MARK_PERMISSION ;;
+      question) body="Question for you" mark=$MARK_QUESTION ;;
+      plan) body="Plan ready for review" mark=$MARK_PLAN ;;
+      input) body="Input needed" mark=$MARK_INPUT ;;
+      *) body="Done — your turn" mark=$MARK_DONE ;;
     esac
     sound=0
     case $SOUND in all) sound=1 ;; blocking) [ "$blocking" = 1 ] && sound=1 ;; esac
@@ -205,6 +242,14 @@ case "$1" in
       *" ${term:-none} "*) case $kind in permission|input|done) pop=0 ;; esac ;;
     esac
     if [ $pop = 1 ]; then popup_job </dev/null >/dev/null 2>&1 & fi
+    # Look up the tty now: once this hook exits, its parent may be gone too.
+    title=0 nag=0
+    [ "$TITLE" = 1 ] && [ -n "$mark" ] && title=1
+    [ "$BELL" = 1 ] && [ "${NAG_SEC:-0}" -gt 0 ] && [ ! -f "$here/attention.mute" ] && nag=1
+    if [ $os != windows ] && [ $title$nag != 00 ] && tty=$(claude_tty); then
+      [ $title = 1 ] && title_job </dev/null >/dev/null 2>&1 &
+      [ $nag = 1 ] && nag_job </dev/null >/dev/null 2>&1 &
+    fi
     ;;
   off)
     # Only reached when this wait should end (see the checks at the top).

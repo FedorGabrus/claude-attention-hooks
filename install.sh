@@ -148,7 +148,9 @@ if [ $mode = install ]; then
 
 One-time setup on macOS:
   - System Settings > Notifications: allow "Script Editor" (pop-ups sent by the hook)
-    and your terminal (Ghostty/iTerm2 send Claude's own pop-ups). Turn on Badges.
+    and your terminal (Ghostty/iTerm2 send Claude's own pop-ups). Turn on Badges:
+    the dock icon then keeps a badge until you come back.
+    For pop-ups that stay until dismissed, set their style to Alerts (Persistent).
   - Terminal.app: Settings > Profiles > Advanced > Bell: tick "Badge app icon" and
     "Bounce app icon", untick "Audible bell" (or it beeps at every turn end).
   - iTerm2: Settings > Profiles > Terminal: "Silence bell", "Show bell icon in tabs".

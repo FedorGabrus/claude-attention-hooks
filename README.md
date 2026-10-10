@@ -47,17 +47,17 @@ New sessions pick up the hooks; restart any running ones.
 | PowerShell / cmd window | taskbar flash | hook (toast) |
 | VS Code on Windows | taskbar flash, bell icon on the tab | hook (toast) |
 
-In Ghostty, iTerm2 and kitty, Claude Code already sends its own notification for permission prompts and after 60 s idle. It's focus-aware, and clicking it opens the right tab, so the hook leaves those events to it. Claude's own notification never covers AskUserQuestion or plan approval, so the hook covers those.
+In Ghostty, iTerm2 and kitty, Claude Code already sends its own notification for permission prompts and after 60 s idle. It's focus-aware, and clicking it opens the right tab, so the hook leaves those events to it. Claude's own notification never covers AskUserQuestion or plan approval, so the hook covers those. Claude's own only appear if the terminal may post notifications. If you keep the terminal's notifications off, set `BUILTIN_TERMINALS=""` so the hook sends them instead.
 
 ## One-time setup
 
 **macOS**
-- System Settings → Notifications → **Script Editor**: allow. The hook's pop-ups come from `osascript`.
-- System Settings → Notifications → **your terminal** (Ghostty/iTerm2): allow, with Badges on.
+- System Settings → Notifications → **Script Editor**: allow. The hook's pop-ups come from `osascript`. Set the style to *Alerts* (*Persistent*) to keep them on screen until you dismiss them.
+- System Settings → Notifications → **your terminal** (Ghostty/iTerm2): allow, with Badges on. The badge stays on the dock icon until you switch back to the terminal, so you can see at a glance that Claude is waiting. If the terminal is listed but switched off, macOS refuses its badge without asking (Ghostty logs `UNErrorDomain Code=1`), and Claude's own pop-ups don't appear either.
 - Terminal.app: Settings → Profiles → Advanced → Bell: tick *Badge app icon* and *Bounce app icon*; untick *Audible bell*, or it beeps at every turn end.
 - iTerm2: Settings → Profiles → Terminal: *Silence bell*, *Show bell icon in tabs*.
 - VS Code: `"terminal.integrated.enableVisualBell": true`, `"accessibility.signals.terminalBell": {"sound": "off"}`.
-- Ghostty (optional): `bell-features = attention,title,border` adds a border around the waiting split.
+- Ghostty (optional): `bell-features = attention,title,border` adds a border around the waiting split. `bell-features = no-title` drops Ghostty's own 🔔, leaving just the hook's mark (`TITLE`).
 
 **Windows**
 - Claude Code runs hooks with Git Bash (Git for Windows), which must be installed.
@@ -75,6 +75,9 @@ In Ghostty, iTerm2 and kitty, Claude Code already sends its own notification for
 | `SOUND` | `blocking` | which pop-ups play a sound: `blocking` (permission/question/plan) · `all` · `none` |
 | `BELL` | `1` | `0` = no terminal bell |
 | `REMIND_MIN` | `0` | one reminder after N minutes if still unanswered |
+| `NAG_SEC` | `0` | ring the bell again every N seconds while you're not looking, so the dock icon keeps bouncing (macOS/Linux; stops after 30 min) |
+| `TITLE` | `1` | while Claude waits, the tab title shows a mark and the project, e.g. `🦖 my-app` (macOS/Linux) |
+| `MARK_PERMISSION` … `MARK_DONE` | `🔐` `🙋` `📋` `✍️` `🦖` | the mark for each kind of wait: permission, question, plan, input, done |
 | `AWAY_SEC` | `120` | idle this long counts as away, even with the terminal in front |
 | `SKIP_TERMINALS` | `""` | `TERM_PROGRAM` values to ignore, e.g. `"vscode"` |
 | `BUILTIN_TERMINALS` | `"ghostty iTerm.app kitty"` | terminals where Claude's own pop-ups are left to do their job |
@@ -93,7 +96,7 @@ Mute pop-ups for a while with `touch ~/.claude/hooks/attention.mute`; delete the
 | `UserPromptSubmit`, `SessionEnd` | `attention.sh off` / `off end` |
 | `PostToolUse`, `PostToolUseFailure` | `attention.sh off tool` |
 
-- **Markers:** `wait` returns `{"terminalSequence": "BEL + OSC 9;4;4"}`, and Claude Code writes it to the terminal. The OSC 9;4 tab ring is skipped in Ghostty/iTerm2/ConEmu, which already show Claude's own progress bar.
+- **Markers:** `wait` returns `{"terminalSequence": "BEL + OSC 9;4;4"}`, and Claude Code writes it to the terminal. The OSC 9;4 tab ring is skipped in Ghostty/iTerm2/ConEmu, which already show Claude's own progress bar. With `NAG_SEC`, a detached job rings the bell again while you're not looking. The `TITLE` mark is written a second after the wait starts, once Claude has finished redrawing its own title. Hooks have no controlling terminal, so both write to the `claude` process's tty, found with `ps`.
 - **Pop-ups:** `wait` saves a token per session and starts a detached job. A blocking prompt is checked right away and the "done" turn after `DELAY` seconds. The check is whether you're looking: is the terminal the frontmost app (macOS `lsappinfo`, Windows `GetForegroundWindow`), and have you used the keyboard or mouse recently? If you're not looking, and the wait is still on, it shows an `osascript` notification or a Windows toast. If you were looking when a blocking prompt appeared, there's no later re-check: no hook fires when you answer a permission prompt, so a re-check can't tell whether you walked away or approved a long-running tool. Windows toasts are tagged by session, so they replace each other and are removed when you respond.
 - **Clearing:** `off` deletes the token, which cancels pending pop-ups, and clears the ring. After a tool call (`off tool`), only a wait that belongs to that call is cleared. The call has to come from the same agent, so a subagent's tools don't clear the main thread's prompt. For a question or plan, it also has to be the same tool call (`tool_use_id`).
 - **Which sessions:** the hook does nothing unless `CLAUDE_CODE_ENTRYPOINT=cli` (an interactive terminal). Over SSH you get markers only.
