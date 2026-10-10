@@ -129,12 +129,16 @@ winps() {
 
 # You're "looking" if the terminal app is in front and you've touched the
 # keyboard/mouse recently. (Windows checks this inside `winps notify`.)
+term_in_front() {
+  front=$(lsappinfo info -only bundleID "$(lsappinfo front)" 2>/dev/null | sed -n 's/.*="\(.*\)".*/\1/p')
+  [ -n "$front" ] && [ "$front" = "${__CFBundleIdentifier:-}" ]
+}
+
 present() {
   [ "$POPUP" = always ] && return 1
   case $os in
     mac)
-      front=$(lsappinfo info -only bundleID "$(lsappinfo front)" 2>/dev/null | sed -n 's/.*="\(.*\)".*/\1/p')
-      [ -n "$front" ] && [ "$front" = "${__CFBundleIdentifier:-}" ] || return 1
+      term_in_front || return 1
       idle=$(ioreg -c IOHIDSystem 2>/dev/null | awk '/HIDIdleTime/ {print int($NF/1000000000); exit}')
       [ "${idle:-0}" -lt "$AWAY_SEC" ]
       ;;
@@ -187,13 +191,44 @@ claude_tty() {
   return 1
 }
 
+# Did you just type into this tab? Claude reads its tty when there's input,
+# which moves the tty's access time. Other things do too: focus changes,
+# scrolling, clicks, and the terminal answering Claude's queries (a burst of
+# them right after Claude draws). So a read only counts with the terminal in
+# front and a key pressed in the last second. macOS only.
+typed_here() {
+  t=$(stat -f %a "$tty" 2>/dev/null) || return 1
+  [ "$t" = "$read_at" ] && return 1
+  read_at=$t
+  [ $n -ge 12 ] || return 1   # still settling after Claude's last redraw
+  term_in_front || return 1
+  key=$(osascript -l JavaScript -e 'ObjC.import("CoreGraphics"); $.CGEventSourceSecondsSinceLastEventType(1, 10) < 1' 2>/dev/null)
+  [ "$key" = true ]
+}
+
 # Put "<mark> <project>" in the tab title. Claude Code sets the title itself,
-# so ours goes in after it's done redrawing; Claude's next title update (once
-# you respond and it gets to work) puts its own back.
+# so ours goes in after it's done redrawing. On macOS, once you start typing
+# in the tab the wait counts as answered: the mark and ring go, and so do
+# pending pop-ups and nags. Otherwise Claude's next title update, once you
+# respond and it gets to work, puts its own back.
 title_job() {
   sleep 1
   still_waiting || return
   printf '\033]2;%s %s\007' "$mark" "$project" >"$tty"
+  [ $os = mac ] || return
+  read_at=$(stat -f %a "$tty" 2>/dev/null) || return
+  n=0
+  while [ $n -lt 86400 ]; do   # half-seconds: gives up after 12 h
+    sleep 0.5
+    n=$((n + 1))
+    still_waiting || return
+    typed_here || continue
+    rm -f "$state"
+    clear=
+    [ $progress = 1 ] && clear='\033]9;4;0;0\007'
+    printf "\033]2;%s\007$clear" "$project" >"$tty"
+    return
+  done
 }
 
 # Ring the bell again every NAG_SEC seconds while you're not looking, so the
