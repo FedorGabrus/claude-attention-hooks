@@ -113,10 +113,6 @@ if [ $mode = install ] && command -v jq >/dev/null 2>&1; then
     | unique[]' "$tmp")
   [ -n "$others" ] && { warn "Other hooks already look like notifiers; you may get double alerts:"; printf '      %s\n' "$others"; }
   [ "$(jq -r '.disableAllHooks // false' "$tmp")" = true ] && warn '"disableAllHooks" is true in settings.json, so no hooks run.'
-  if [ -f "$HOME/.claude.json" ]; then
-    ch=$(jq -r '.preferredNotifChannel // "auto"' "$HOME/.claude.json" 2>/dev/null || echo auto)
-    [ "$ch" != auto ] && warn "Claude's notification channel is \"$ch\", not auto. In Ghostty/iTerm2/kitty set BUILTIN_TERMINALS=\"\" in attention.conf if you don't get pop-ups."
-  fi
 fi
 
 # --- write ------------------------------------------------------------------
@@ -147,8 +143,11 @@ if [ $mode = install ]; then
       cat <<'TIPS'
 
 One-time setup on macOS:
-  - System Settings > Notifications: allow "Script Editor" (pop-ups sent by the hook)
-    and your terminal (Ghostty/iTerm2 send Claude's own pop-ups). Turn on Badges.
+  - Ghostty/iTerm2/kitty: Claude Code sends its own pop-ups there. For markers only,
+    run /config in Claude Code and set Notifications to disabled.
+  - System Settings > Notifications > your terminal (Ghostty/iTerm2): allow, with
+    Badges on, so the dock icon keeps a badge until you come back. Set the alert
+    style to None if you only want the badge.
   - Terminal.app: Settings > Profiles > Advanced > Bell: tick "Badge app icon" and
     "Bounce app icon", untick "Audible bell" (or it beeps at every turn end).
   - iTerm2: Settings > Profiles > Terminal: "Silence bell", "Show bell icon in tabs".
