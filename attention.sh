@@ -15,6 +15,11 @@
 #              after $DELAY seconds for "done". At most one per wait (plus an
 #              optional reminder). Answering earlier cancels it.
 #
+# "Done" holds off while Claude is still waiting on background work: for as
+# long as background agents run, and for up to $BG_SHELL_MIN minutes when only
+# background shells do. Claude resumes when they finish, and that turn's Stop
+# decides.
+#
 # Hooks have no controlling terminal, so escape sequences go back to Claude
 # Code in the `terminalSequence` JSON field. (The NAG_SEC bells and the TITLE
 # mark go straight to claude's own tty, found with ps.) Anything slow (pop-ups, Windows
@@ -83,6 +88,7 @@ REMIND_MIN=0        # >0 = one reminder pop-up after this many minutes
 NAG_SEC=0           # >0 = ring the bell again every N seconds while you're not looking
 TITLE=1             # 0 = leave the tab title alone
 MARK_PERMISSION="🔐" MARK_QUESTION="🙋" MARK_PLAN="📋" MARK_INPUT="✍️" MARK_DONE="🦖"
+BG_SHELL_MIN=10     # only background shells left running: wait this long for Claude to resume before "done"
 AWAY_SEC=120        # idle longer than this = you're away, even if the terminal is in front
 SKIP_TERMINALS=""   # TERM_PROGRAM values to ignore, e.g. "vscode"
 BUILTIN_TERMINALS="ghostty iTerm.app kitty"  # Claude's own pop-ups cover permission/input/idle here
@@ -202,6 +208,44 @@ nag_job() {
   done
 }
 
+write_state() {
+  printf '%s\nkind=%s\nowner=%s\ntool=%s\n' "$token" "$1" "${owner:-main}" "$tool" >"$state"
+}
+
+# Pop-up, tab title and nag jobs for the current wait, all detached.
+start_jobs() {
+  pop=1
+  [ "$POPUP" = never ] && pop=0
+  [ -f "$here/attention.mute" ] && pop=0
+  [ -n "${SSH_CONNECTION:-}" ] && pop=0
+  case " $BUILTIN_TERMINALS " in
+    *" ${term:-none} "*) case $kind in permission|input|done) pop=0 ;; esac ;;
+  esac
+  if [ $pop = 1 ]; then popup_job </dev/null >/dev/null 2>&1 & fi
+  # Look up the tty now: once this hook exits, its parent may be gone too.
+  title=0 nag=0
+  [ "$TITLE" = 1 ] && [ -n "$mark" ] && title=1
+  [ "$BELL" = 1 ] && [ "${NAG_SEC:-0}" -gt 0 ] && [ ! -f "$here/attention.mute" ] && nag=1
+  if [ $os != windows ] && [ $title$nag != 00 ] && { [ -n "${tty:-}" ] || tty=$(claude_tty); }; then
+    [ $title = 1 ] && title_job </dev/null >/dev/null 2>&1 &
+    [ $nag = 1 ] && nag_job </dev/null >/dev/null 2>&1 &
+  fi
+}
+
+# Only background shells were left running when the turn ended. If Claude
+# hasn't resumed after BG_SHELL_MIN minutes (a server that never exits, say),
+# it's your turn after all: signal "done" from here, straight to the tty.
+late_done_job() {
+  sleep $((BG_SHELL_MIN * 60))
+  still_waiting || return
+  seq=
+  [ "$BELL" = 1 ] && seq='\a'
+  [ $progress = 1 ] && seq="$seq"'\033]9;4;4;100\007'
+  [ -n "$seq" ] && [ -n "${tty:-}" ] && printf "$seq" >"$tty"
+  if [ $os = windows ]; then winps flash; fi
+  start_jobs
+}
+
 case "$1" in
   wait)
     kind=${2:-done}
@@ -224,8 +268,39 @@ case "$1" in
     tool=
     case $kind in question|plan) field tool_use_id tool ;; esac
 
+    # Is Claude still waiting on background work? Stop lists the running
+    # background tasks in background_tasks (older versions don't send it).
+    # Quotes inside descriptions and commands are escaped, so only real
+    # "type" fields match.
+    bg=
+    if [ "$kind" = done ]; then
+      case $input in *'"background_tasks":['*)
+        bt=${input#*'"background_tasks":['}
+        bt=${bt%%'"session_crons"'*}
+        case $bt in
+          *'"type":"subagent"'*|*'"type":"workflow"'*|*'"type":"teammate"'*|*'"type":"cloud session"'*) bg=agent ;;
+          *'"type":"shell"'*|*'"type":"monitor"'*|*'"type":"MCP task"'*) bg=shell ;;
+        esac ;;
+      esac
+      [ "$bg" = shell ] && [ "${BG_SHELL_MIN:-0}" -le 0 ] && bg=
+    fi
+
     token="$$.${RANDOM:-0}"
-    printf '%s\nkind=%s\nowner=%s\ntool=%s\n' "$token" "$kind" "${owner:-main}" "$tool" >"$state"
+
+    # Claude resumes by itself when background work finishes, and that turn's
+    # Stop decides. Agents always finish; a shell may be a server that never
+    # does, so after BG_SHELL_MIN "done" is signalled anyway.
+    if [ -n "$bg" ]; then
+      write_state busy
+      if [ $bg = shell ]; then
+        tty=
+        [ $os != windows ] && tty=$(claude_tty)
+        late_done_job </dev/null >/dev/null 2>&1 &
+      fi
+      exit 0
+    fi
+
+    write_state "$kind"
 
     seq=""
     [ "$BELL" = 1 ] && seq='\u0007'
@@ -234,22 +309,8 @@ case "$1" in
 
     if [ $os = windows ]; then winps flash </dev/null >/dev/null 2>&1 & fi
 
-    pop=1
-    [ "$POPUP" = never ] && pop=0
-    [ -f "$here/attention.mute" ] && pop=0
-    [ -n "${SSH_CONNECTION:-}" ] && pop=0
-    case " $BUILTIN_TERMINALS " in
-      *" ${term:-none} "*) case $kind in permission|input|done) pop=0 ;; esac ;;
-    esac
-    if [ $pop = 1 ]; then popup_job </dev/null >/dev/null 2>&1 & fi
-    # Look up the tty now: once this hook exits, its parent may be gone too.
-    title=0 nag=0
-    [ "$TITLE" = 1 ] && [ -n "$mark" ] && title=1
-    [ "$BELL" = 1 ] && [ "${NAG_SEC:-0}" -gt 0 ] && [ ! -f "$here/attention.mute" ] && nag=1
-    if [ $os != windows ] && [ $title$nag != 00 ] && tty=$(claude_tty); then
-      [ $title = 1 ] && title_job </dev/null >/dev/null 2>&1 &
-      [ $nag = 1 ] && nag_job </dev/null >/dev/null 2>&1 &
-    fi
+    tty=
+    start_jobs
     ;;
   off)
     # Only reached when this wait should end (see the checks at the top).
