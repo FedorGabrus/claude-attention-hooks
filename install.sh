@@ -138,6 +138,7 @@ if [ $mode = install ]; then
   echo "  hooks:    $settings${backup:+ (backup: $backup)}"
   echo
   echo "New Claude Code sessions pick it up; running ones need a restart."
+  echo "Check how the marks look in your terminal: sh ~/.claude/hooks/attention.sh test"
   case "$(uname -s)" in
     Darwin)
       cat <<'TIPS'

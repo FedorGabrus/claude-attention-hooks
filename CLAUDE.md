@@ -16,9 +16,11 @@ sh -n attention.sh        # syntax check
 
 # Drive the hook by hand (uses the repo's attention.conf, state in $TMPDIR/claude-attention-<sid>)
 echo '{"session_id":"t"}' | CLAUDE_CODE_ENTRYPOINT=cli sh attention.sh wait done   # -> {"terminalSequence":"\u0007..."}
-echo '{"session_id":"t"}' | CLAUDE_CODE_ENTRYPOINT=cli sh attention.sh off
+echo '{"session_id":"t"}' | CLAUDE_CODE_ENTRYPOINT=cli sh attention.sh off         # your prompt: also starts the short-turn clock
+echo '{"session_id":"t"}' | CLAUDE_CODE_ENTRYPOINT=cli sh attention.sh wait done   # within SHORT_TURN_SEC: no \u0007 (ring only, where used)
 echo '{"session_id":"t","background_tasks":[{"type":"subagent"}],"session_crons":[]}' \
   | CLAUDE_CODE_ENTRYPOINT=cli sh attention.sh wait done                           # prints nothing: "busy"
+sh attention.sh test [kind]   # by hand, in a real terminal: marks this tab after 5 s, Enter clears
 ```
 
 Live sessions run the *installed* copy in `~/.claude/hooks/`, not the repo: re-run `./install.sh` after editing. Script edits take effect on the next event; changes to `attention-hooks.json` need a Claude Code restart. Windows: `install.cmd` / `install.ps1 [-DryRun|-Uninstall]`. The Windows path has not been tested from a Mac (see the checklist at the end of README.md).
@@ -27,10 +29,11 @@ Live sessions run the *installed* copy in `~/.claude/hooks/`, not the repo: re-r
 
 - `attention-hooks.json` maps Claude Code events to `attention.sh` subcommands (table in README "How it works"). The installers append these groups to each event in the user's `settings.json`. Hooks must live in user settings: Claude Code only passes `terminalSequence` through for hooks from the user's own settings files, so this can't be a plugin.
 - `attention.sh` is the whole runtime, one POSIX `sh` script that must run in macOS `/bin/sh` and Git Bash on Windows (no bashisms; `$RANDOM` has a fallback). Subcommands:
-  - `wait <kind>`: writes the per-session state file and prints `{"terminalSequence": ...}` on stdout, which Claude Code writes to the terminal. For `done` it inspects `background_tasks` from the Stop input: agents → record a `busy` wait and signal nothing; only shells/monitors/MCP tasks → detached `late_done_job` signals after `BG_SHELL_MIN`.
-  - `arm` (PermissionRequest): records which agent's permission prompt comes next in `$state.req`. **Must print nothing**: PermissionRequest stdout is read as a permission decision.
-  - `off [tool|end]`: clears the wait. `off tool` runs after *every* tool call, so its checks (same agent, and for question/plan the same `tool_use_id`) use shell builtins only, before any fork or reading the conf. Keep that path cheap.
-- State file `${TMPDIR:-$TEMP}/claude-attention-<session_id>`: line 1 is a random token, then `kind=`, `owner=`, `tool=`. Detached jobs (`title_job`, `nag_job`, `late_done_job`) poll `still_waiting` and exit as soon as the token is gone or replaced; that's how `off` and a newer `wait` stop them.
+  - `wait <kind>`: writes the per-session state file and prints `{"terminalSequence": ...}` on stdout, which Claude Code writes to the terminal. `error` comes from StopFailure. For `done` it inspects `background_tasks` from the Stop input: agents → record a `busy` wait and signal nothing; only shells/monitors/MCP tasks → detached `late_done_job` signals after `BG_SHELL_MIN`. A `done` less than `SHORT_TURN_SEC` after `$state.acted` is quiet: no BEL/flash, title job only, and `late_done_job` rings after `SHORT_TURN_BELL_SEC`.
+  - `arm` (PermissionRequest): records which agent's permission prompt comes next, and for which tool, in `$state.req`. **Must print nothing**: PermissionRequest stdout is read as a permission decision.
+  - `test [kind]`: run by hand, skips the entrypoint check and stdin; writes the marks to `/dev/tty`, touches no state.
+  - `off [tool|end]`: clears the wait. Plain `off` (UserPromptSubmit) writes `$state.acted`; so does clearing a permission/question/plan/input wait (`off tool`, or the macOS typing check), but not clearing done/error/busy, which is Claude resuming on its own. `off tool` runs after *every* tool call, so its checks (same agent, and for question/plan the same `tool_use_id`) use shell builtins only, before any fork or reading the conf. Keep that path cheap.
+- State file `${TMPDIR:-$TEMP}/claude-attention-<session_id>`: line 1 is a random token, then `kind=`, `owner=`, `tool=`. Beside it: `.req` (owner, then tool name, from `arm`) and `.acted` (epoch seconds of your last prompt or answer). Detached jobs (`title_job`, `nag_job`, `late_done_job`) poll `still_waiting` and exit as soon as the token is gone or replaced; that's how `off` and a newer `wait` stop them.
 - Hooks have no controlling terminal. Anything written after the hook returns (title mark, nag bells, late "done") goes straight to the `claude` process's tty, found by walking parents with `ps` (`claude_tty`). It's looked up before the hook exits, since the parent may be gone later.
 - macOS "user typed or scrolled in this tab" detection (`used_here`): tty access-time changes, gated on the terminal being frontmost (`lsappinfo`) and a key press or scroll-wheel event in the last second (`osascript` JXA `CGEventSourceSecondsSinceLastEventType`), ignoring reads in the first 7 s after the wait starts.
 - Hook input JSON is parsed with the builtin `field` helper (no `jq` at runtime). It only accepts `[A-Za-z0-9_.-]` values.

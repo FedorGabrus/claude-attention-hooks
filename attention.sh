@@ -1,14 +1,19 @@
 #!/bin/sh
 # Claude Code hook: get your attention when Claude is waiting for you.
 #
-#   attention.sh wait <permission|question|plan|input|done>
+#   attention.sh wait <permission|question|plan|input|error|done>
 #   attention.sh arm         (PermissionRequest: note whose prompt comes next)
 #   attention.sh off [tool|end]
+#   attention.sh test [kind] (by hand: mark this tab in 5 s, to check the setup)
 #
 # Quiet markers only, no pop-ups: BEL (tab bell / dock badge / taskbar flash)
 # and, where Claude doesn't draw its own progress bar, an OSC 9;4 "warning"
 # ring on the tab. Immediate, silent, cleared as soon as you respond. With
 # NAG_SEC, the bell rings again until you've seen it.
+#
+# "Done" after a short turn (you were probably watching) only marks the title
+# and ring at first; the bell follows after SHORT_TURN_BELL_SEC if you still
+# haven't responded.
 #
 # "Done" holds off while Claude is still waiting on background work: for as
 # long as background agents run, and for up to $BG_SHELL_MIN minutes when only
@@ -21,13 +26,17 @@
 # Windows taskbar flash) runs detached so the hook returns in milliseconds.
 # Works in macOS sh and Git Bash on Windows. Settings: attention.conf.
 
-input=$(cat)
-
 # --- Only interactive terminal sessions -------------------------------------
 # Skips the VS Code/JetBrains extension panel, the desktop app, the SDK,
-# `claude -p` (entrypoint becomes sdk-cli) and remote sessions.
-[ "${CLAUDE_CODE_ENTRYPOINT:-}" = cli ] || exit 0
-[ -z "${CLAUDE_CODE_REMOTE:-}" ] || exit 0
+# `claude -p` (entrypoint becomes sdk-cli) and remote sessions. `test` is run
+# by hand, outside Claude, with nothing on stdin.
+if [ "${1:-}" = test ]; then
+  input=
+else
+  input=$(cat)
+  [ "${CLAUDE_CODE_ENTRYPOINT:-}" = cli ] || exit 0
+  [ -z "${CLAUDE_CODE_REMOTE:-}" ] || exit 0
+fi
 
 # field NAME VAR: set VAR to the string field NAME of the hook input, using
 # builtins only. Ids are [A-Za-z0-9_.-]; anything else reads as empty.
@@ -45,19 +54,27 @@ field session_id sid
 [ -n "$sid" ] || sid=default
 state="${TMPDIR:-${TEMP:-/tmp}}/claude-attention-$sid"
 
+# When you last sent a prompt or answered one: "done" soon after is a short turn.
+acted() { date +%s >"$state.acted"; }
+
 # PermissionRequest comes just before the permission prompt's Notification,
-# which doesn't say whose prompt it is. Print nothing here: PermissionRequest
-# output is read as a permission decision.
+# which doesn't say whose prompt it is or for which tool. Print nothing here:
+# PermissionRequest output is read as a permission decision.
 if [ "$1" = arm ]; then
   field agent_id owner
-  printf '%s\n' "${owner:-main}" >"$state.req"
+  field tool_name ptool
+  case $ptool in mcp__*) ptool=${ptool#mcp__}; ptool=${ptool%%__*} ;; esac   # MCP: just the server
+  printf '%s\n%s\n' "${owner:-main}" "$ptool" >"$state.req"
   exit 0
 fi
 
 # `off` runs after every tool call: decide with builtins only whether there's
 # anything to clear before forking or reading the conf.
 if [ "$1" = off ]; then
-  [ "${2:-}" = end ] && rm -f "$state.req"
+  case ${2:-} in
+    '') acted ;;   # UserPromptSubmit: the turn starts now
+    end) rm -f "$state.req" "$state.acted" ;;
+  esac
   [ -f "$state" ] || exit 0
   # After a tool call, only clear the wait it belongs to: same agent (a
   # subagent's tools don't answer the main thread), and for a question or
@@ -78,7 +95,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 BELL=1              # 0 = don't send BEL
 NAG_SEC=0           # >0 = ring the bell again every N seconds until you've seen it
 TITLE=1             # 0 = leave the tab title alone
-MARK_PERMISSION="🔐" MARK_QUESTION="🙋" MARK_PLAN="📋" MARK_INPUT="✍️" MARK_DONE="👀"
+MARK_PERMISSION="🔐" MARK_QUESTION="🙋" MARK_PLAN="📋" MARK_INPUT="✍️" MARK_ERROR="⚠️" MARK_DONE="👀"
+SHORT_TURN_SEC=30   # "done" this soon after your prompt or answer: title/ring only at first (0 = always ring)
+SHORT_TURN_BELL_SEC=60  # ...then the bell if you still haven't responded (0 = never)
 BG_SHELL_MIN=10     # only background shells left running: wait this long for Claude to resume before "done"
 SKIP_TERMINALS=""   # TERM_PROGRAM values to ignore, e.g. "vscode"
 [ -f "$here/attention.conf" ] && . "$here/attention.conf"
@@ -88,7 +107,10 @@ term=${TERM_PROGRAM:-}
 if [ -z "$term" ] && { [ -n "${KITTY_WINDOW_ID:-}" ] || [ "${TERM:-}" = xterm-kitty ]; }; then
   term=kitty
 fi
-case " $SKIP_TERMINALS " in *" ${term:-none} "*) exit 0 ;; esac
+case " $SKIP_TERMINALS " in *" ${term:-none} "*)
+  [ "$1" = test ] && echo "SKIP_TERMINALS in attention.conf includes \"$term\": nothing shows in this terminal."
+  exit 0 ;;
+esac
 
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) os=windows ;;
@@ -149,15 +171,15 @@ used_here() {
   [ "$used" = true ]
 }
 
-# Put "<mark> <project>" in the tab title. Claude Code sets the title itself,
-# so ours goes in after it's done redrawing. On macOS, once you start typing
-# or scroll in the tab the wait counts as answered: the mark, ring and nags go.
-# Otherwise Claude's next title update, once you respond and it gets to work,
-# puts its own back.
+# Put "<mark> <project>" (permission: "<mark> <project> · <tool>") in the tab
+# title. Claude Code sets the title itself, so ours goes in after it's done
+# redrawing. On macOS, once you start typing or scroll in the tab the wait
+# counts as answered: the mark, ring and nags go. Otherwise Claude's next title
+# update, once you respond and it gets to work, puts its own back.
 title_job() {
   sleep 1
   still_waiting || return
-  printf '\033]2;%s %s\007' "$mark" "$project" >"$tty"
+  printf '\033]2;%s %s\007' "$mark" "$label" >"$tty"
   [ $os = mac ] || return
   read_at=$(stat -f %a "$tty" 2>/dev/null) || return
   n=0
@@ -167,6 +189,7 @@ title_job() {
     still_waiting || return
     used_here || continue
     rm -f "$state"
+    acted
     clear=
     [ $progress = 1 ] && clear='\033]9;4;0;0\007'
     printf "\033]2;%s\007$clear" "$project" >"$tty"
@@ -193,47 +216,57 @@ write_state() {
   printf '%s\nkind=%s\nowner=%s\ntool=%s\n' "$token" "$1" "${owner:-main}" "$tool" >"$state"
 }
 
-# Tab title and nag jobs for the current wait, both detached.
+# Detached jobs for the current wait: "title", "nag" or both.
 start_jobs() {
-  # Look up the tty now: once this hook exits, its parent may be gone too.
   title=0 nag=0
-  [ "$TITLE" = 1 ] && [ -n "$mark" ] && title=1
-  [ "$BELL" = 1 ] && [ "${NAG_SEC:-0}" -gt 0 ] && nag=1
+  case " $* " in *" title "*) [ "$TITLE" = 1 ] && [ -n "$mark" ] && title=1 ;; esac
+  case " $* " in *" nag "*) [ "$BELL" = 1 ] && [ "${NAG_SEC:-0}" -gt 0 ] && nag=1 ;; esac
+  # Look up the tty now: once this hook exits, its parent may be gone too.
   if [ $os != windows ] && [ $title$nag != 00 ] && { [ -n "${tty:-}" ] || tty=$(claude_tty); }; then
     [ $title = 1 ] && title_job </dev/null >/dev/null 2>&1 &
     [ $nag = 1 ] && nag_job </dev/null >/dev/null 2>&1 &
   fi
 }
 
-# Only background shells were left running when the turn ended. If Claude
-# hasn't resumed after BG_SHELL_MIN minutes (a server that never exits, say),
-# it's your turn after all: signal "done" from here, straight to the tty.
+# Signal "done" late, from a detached job straight to the tty: after $1
+# seconds, if you still haven't responded. Then start the jobs named in the
+# other arguments. Used when only background shells were left running (a
+# server that never exits, say) and when a short turn's bell was held back.
 late_done_job() {
-  sleep $((BG_SHELL_MIN * 60))
+  sleep "$1"
+  shift
   still_waiting || return
   seq=
   [ "$BELL" = 1 ] && seq='\a'
   [ $progress = 1 ] && seq="$seq"'\033]9;4;4;100\007'
   [ -n "$seq" ] && [ -n "${tty:-}" ] && printf "$seq" >"$tty"
   if [ $os = windows ]; then winps flash; fi
-  start_jobs
+  start_jobs "$@"
+}
+
+pick_mark() {
+  case $1 in
+    permission) mark=$MARK_PERMISSION ;;
+    question) mark=$MARK_QUESTION ;;
+    plan) mark=$MARK_PLAN ;;
+    input) mark=$MARK_INPUT ;;
+    error) mark=$MARK_ERROR ;;
+    *) mark=$MARK_DONE ;;
+  esac
 }
 
 case "$1" in
   wait)
     kind=${2:-done}
-    case $kind in
-      permission) mark=$MARK_PERMISSION ;;
-      question) mark=$MARK_QUESTION ;;
-      plan) mark=$MARK_PLAN ;;
-      input) mark=$MARK_INPUT ;;
-      *) mark=$MARK_DONE ;;
-    esac
+    pick_mark "$kind"
 
     # Whose wait this is, so `off tool` can tell its tool calls from others'.
-    owner=
-    [ "$kind" = permission ] && [ -f "$state.req" ] && IFS= read -r owner <"$state.req"
+    # For a permission prompt, `arm` also noted the tool, for the title.
+    owner= ptool=
+    [ "$kind" = permission ] && [ -f "$state.req" ] && { IFS= read -r owner; IFS= read -r ptool; } <"$state.req"
     [ -n "$owner" ] || field agent_id owner
+    label=$project
+    [ -n "$ptool" ] && label="$project · $ptool"
     tool=
     case $kind in question|plan) field tool_use_id tool ;; esac
 
@@ -264,27 +297,68 @@ case "$1" in
       if [ $bg = shell ]; then
         tty=
         [ $os != windows ] && tty=$(claude_tty)
-        late_done_job </dev/null >/dev/null 2>&1 &
+        late_done_job $((BG_SHELL_MIN * 60)) title nag </dev/null >/dev/null 2>&1 &
       fi
       exit 0
+    fi
+
+    # A short turn: you were probably watching it. Only the passive marks for
+    # now (title, and the ring where Claude has no progress bar of its own);
+    # the bell comes after SHORT_TURN_BELL_SEC if you still haven't responded.
+    quiet=0
+    if [ "$kind" = done ] && [ "${SHORT_TURN_SEC:-0}" -gt 0 ] && [ -f "$state.acted" ]; then
+      since=
+      IFS= read -r since <"$state.acted"
+      case $since in
+        ''|*[!0-9]*) ;;
+        *) [ $(($(date +%s) - since)) -lt "$SHORT_TURN_SEC" ] && quiet=1 ;;
+      esac
     fi
 
     write_state "$kind"
 
     seq=""
-    [ "$BELL" = 1 ] && seq='\u0007'
+    [ "$BELL" = 1 ] && [ $quiet = 0 ] && seq='\u0007'
     [ $progress = 1 ] && seq="$seq"'\u001b]9;4;4;100\u0007'
     emit "$seq"
 
-    if [ $os = windows ]; then winps flash </dev/null >/dev/null 2>&1 & fi
-
     tty=
-    start_jobs
+    if [ $quiet = 1 ]; then
+      start_jobs title
+      if [ "${SHORT_TURN_BELL_SEC:-0}" -gt 0 ]; then
+        [ $os != windows ] && [ -z "$tty" ] && tty=$(claude_tty)
+        late_done_job "$SHORT_TURN_BELL_SEC" nag </dev/null >/dev/null 2>&1 &
+      fi
+    else
+      if [ $os = windows ]; then winps flash </dev/null >/dev/null 2>&1 & fi
+      start_jobs title nag
+    fi
     ;;
   off)
     # Only reached when this wait should end (see the checks at the top).
     rm -f "$state"
+    # You answered Claude. (A tool call that ends a done/error/busy wait is
+    # Claude resuming by itself, not you.)
+    [ "${2:-}" = tool ] && case $w_kind in permission|question|plan|input) acted ;; esac
     [ $progress = 1 ] && emit '\u001b]9;4;0;0\u0007'
+    ;;
+  test)
+    # Run by hand: what a wait looks like in this terminal, with your settings.
+    pick_mark "${2:-done}"
+    tty=/dev/tty
+    echo "Switch to another app or tab: this tab gets marked in 5 s."
+    sleep 5
+    seq=
+    [ "$BELL" = 1 ] && seq='\a'
+    [ $progress = 1 ] && seq="$seq"'\033]9;4;4;100\007'
+    [ -n "$seq" ] && printf "$seq" >"$tty"
+    [ "$TITLE" = 1 ] && [ -n "$mark" ] && [ $os != windows ] && printf '\033]2;%s %s (test)\007' "$mark" "$project" >"$tty"
+    if [ $os = windows ]; then winps flash </dev/null >/dev/null 2>&1 & fi
+    printf 'Marked. Press Enter to clear. '
+    read -r _ <"$tty"
+    clear=
+    [ $progress = 1 ] && clear='\033]9;4;0;0\007'
+    printf "\033]2;\007$clear" >"$tty"
     ;;
 esac
 exit 0

@@ -30,6 +30,11 @@
         "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/attention.sh wait done", "timeout": 5 }]
       }
     ],
+    "StopFailure": [
+      {
+        "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/attention.sh wait error", "timeout": 5 }]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/attention.sh off", "timeout": 5 }]

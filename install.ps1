@@ -107,6 +107,7 @@ if (-not $Uninstall) {
   Write-Host "  hooks:    $Settings$(if ($backup) { " (backup: $backup)" })"
   Write-Host ''
   Write-Host 'New Claude Code sessions pick it up; running ones need a restart.'
+  Write-Host 'Check how the marks look in your terminal (from Git Bash): sh ~/.claude/hooks/attention.sh test'
   Write-Host ''
   Write-Host 'Optional, Windows Terminal: add "bellStyle": ["window", "taskbar"] to profiles.defaults.'
 } else {
