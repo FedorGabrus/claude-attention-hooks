@@ -2,11 +2,11 @@
   "hooks": {
     "Notification": [
       {
-        "matcher": "permission_prompt",
+        "matcher": "permission_prompt|worker_permission_prompt",
         "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/attention.sh wait permission", "timeout": 5 }]
       },
       {
-        "matcher": "elicitation_dialog|agent_needs_input",
+        "matcher": "elicitation_dialog|elicitation_url_dialog|agent_needs_input",
         "hooks": [{ "type": "command", "command": "sh ~/.claude/hooks/attention.sh wait input", "timeout": 5 }]
       }
     ],
